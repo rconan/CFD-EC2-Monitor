@@ -7,7 +7,7 @@ use std::net::TcpStream;
 use std::path::Path;
 use tokio;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 #[allow(dead_code)]
 struct InstanceInfo {
     instance_id: String,
@@ -16,13 +16,15 @@ struct InstanceInfo {
     private_ip: Option<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct InstanceResults {
     instance_id: String,
+    public_ip: Option<String>,
     name: String,
     timestep_result: Option<String>,
     csv_count: Option<i32>,
     free_disk_space: Option<String>,
+    zcsvs_status: Option<bool>,
     connection_error: Option<String>,
 }
 
@@ -121,31 +123,31 @@ async fn process_instance(instance: &InstanceInfo) -> InstanceResults {
         None => {
             return InstanceResults {
                 instance_id: instance.instance_id.clone(),
+                public_ip: instance.public_ip.clone(),
                 name: instance.name.clone(),
-                timestep_result: None,
-                csv_count: None,
-                free_disk_space: None,
                 connection_error: Some("No public IP available".to_string()),
+                ..Default::default()
             };
         }
     };
 
     match connect_and_execute_commands(ip, &instance.name).await {
-        Ok((timestep, csv_count, disk_space)) => InstanceResults {
+        Ok((timestep, csv_count, disk_space, zcsvs_running)) => InstanceResults {
             instance_id: instance.instance_id.clone(),
+            public_ip: instance.public_ip.clone(),
             name: instance.name.clone(),
             timestep_result: Some(timestep),
             csv_count: Some(csv_count),
             free_disk_space: Some(disk_space),
-            connection_error: None,
+            zcsvs_status: Some(zcsvs_running),
+            ..Default::default()
         },
         Err(e) => InstanceResults {
             instance_id: instance.instance_id.clone(),
+            public_ip: instance.public_ip.clone(),
             name: instance.name.clone(),
-            timestep_result: None,
-            csv_count: None,
-            free_disk_space: None,
             connection_error: Some(e.to_string()),
+            ..Default::default()
         },
     }
 }
@@ -153,7 +155,7 @@ async fn process_instance(instance: &InstanceInfo) -> InstanceResults {
 async fn connect_and_execute_commands(
     ip: &str,
     instance_name: &str,
-) -> Result<(String, i32, String), Box<dyn std::error::Error>> {
+) -> Result<(String, i32, String, bool), Box<dyn std::error::Error>> {
     // Connect to SSH
     let tcp = TcpStream::connect(format!("{}:22", ip))?;
     let mut sess = Session::new()?;
@@ -192,7 +194,11 @@ async fn connect_and_execute_commands(
     let csv_count = csv_count_str.trim().parse::<i32>().unwrap_or(0);
     let disk_space = execute_ssh_command(&sess, "df -h / | tail -n1 | awk '{print $4}'")?;
 
-    Ok((timestep_result, csv_count, disk_space))
+    // Check if zcsvs process is running
+    let zcsvs_check = execute_ssh_command(&sess, "ps aux | grep '[z]csvs' | grep -v grep")?;
+    let zcsvs_running = !zcsvs_check.is_empty();
+
+    Ok((timestep_result, csv_count, disk_space, zcsvs_running))
 }
 
 fn execute_ssh_command(
@@ -211,7 +217,11 @@ fn execute_ssh_command(
     if exit_status != 0 {
         let mut stderr = String::new();
         channel.stderr().read_to_string(&mut stderr)?;
-        return Err(format!("Command failed with exit code {}: {}", exit_status, stderr).into());
+        if !stderr.trim().is_empty() {
+            return Err(
+                format!("Command failed with exit code {}: {}", exit_status, stderr).into(),
+            );
+        }
     }
 
     Ok(output.trim().to_string())
@@ -223,7 +233,11 @@ fn print_summary_report(results: &[InstanceResults]) {
     println!("{}", "=".repeat(80));
 
     for result in results {
-        println!("\nInstance: {} ({})", result.name, result.instance_id);
+        println!(
+            "\nInstance: {} ({})",
+            result.name,
+            result.public_ip.as_ref().unwrap_or(&result.instance_id)
+        );
         println!("{}", "-".repeat(50));
 
         if let Some(error) = &result.connection_error {
@@ -241,6 +255,16 @@ fn print_summary_report(results: &[InstanceResults]) {
             println!("📊 CSV Files Count: {}", csv_count);
         } else {
             println!("❌ CSV Files Count: Failed to retrieve");
+        }
+
+        if let Some(zcsvs_running) = result.zcsvs_status {
+            if zcsvs_running {
+                println!("🟢 zcsvs Process: Running");
+            } else {
+                println!("🔴 zcsvs Process: Not running");
+            }
+        } else {
+            println!("❌ zcsvs Process: Failed to check");
         }
 
         if let Some(disk_space) = &result.free_disk_space {
