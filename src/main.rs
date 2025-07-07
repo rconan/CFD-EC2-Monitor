@@ -1,5 +1,6 @@
 use aws_config::BehaviorVersion;
 use aws_sdk_ec2::{Client, types::Filter};
+use chrono::{DateTime, Local};
 use ssh2::Session;
 use std::env;
 use std::io::prelude::*;
@@ -228,8 +229,9 @@ fn execute_ssh_command(
 }
 
 fn print_summary_report(results: &[InstanceResults]) {
+    let local: DateTime<Local> = Local::now();
     println!("{}", "\n".to_string() + "=".repeat(80).as_str());
-    println!("SUMMARY REPORT");
+    println!("SUMMARY REPORT @ {local}");
     println!("{}", "=".repeat(80));
 
     for result in results {
