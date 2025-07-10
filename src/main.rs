@@ -26,6 +26,7 @@ struct InstanceResults {
     csv_count: Option<i32>,
     free_disk_space: Option<String>,
     zcsvs_status: Option<bool>,
+    finalize_status: Option<bool>,
     connection_error: Option<String>,
 }
 
@@ -133,7 +134,7 @@ async fn process_instance(instance: &InstanceInfo) -> InstanceResults {
     };
 
     match connect_and_execute_commands(ip, &instance.name).await {
-        Ok((timestep, csv_count, disk_space, zcsvs_running)) => InstanceResults {
+        Ok((timestep, csv_count, disk_space, zcsvs_running, finalize_running)) => InstanceResults {
             instance_id: instance.instance_id.clone(),
             public_ip: instance.public_ip.clone(),
             name: instance.name.clone(),
@@ -141,6 +142,7 @@ async fn process_instance(instance: &InstanceInfo) -> InstanceResults {
             csv_count: Some(csv_count),
             free_disk_space: Some(disk_space),
             zcsvs_status: Some(zcsvs_running),
+            finalize_status: Some(finalize_running),
             ..Default::default()
         },
         Err(e) => InstanceResults {
@@ -156,7 +158,7 @@ async fn process_instance(instance: &InstanceInfo) -> InstanceResults {
 async fn connect_and_execute_commands(
     ip: &str,
     instance_name: &str,
-) -> Result<(String, i32, String, bool), Box<dyn std::error::Error>> {
+) -> Result<(String, i32, String, bool, bool), Box<dyn std::error::Error>> {
     // Connect to SSH
     let tcp = TcpStream::connect(format!("{}:22", ip))?;
     let mut sess = Session::new()?;
@@ -198,8 +200,17 @@ async fn connect_and_execute_commands(
     // Check if zcsvs process is running
     let zcsvs_check = execute_ssh_command(&sess, "ps aux | grep '[z]csvs' | grep -v grep")?;
     let zcsvs_running = !zcsvs_check.is_empty();
+    // Check if finalize process is running
+    let finalize_check = execute_ssh_command(&sess, "ps aux | grep '[f]inalize' | grep -v grep")?;
+    let finalize_running = !finalize_check.is_empty();
 
-    Ok((timestep_result, csv_count, disk_space, zcsvs_running))
+    Ok((
+        timestep_result,
+        csv_count,
+        disk_space,
+        zcsvs_running,
+        finalize_running,
+    ))
 }
 
 fn execute_ssh_command(
@@ -259,14 +270,24 @@ fn print_summary_report(results: &[InstanceResults]) {
             println!("❌ CSV Files Count: Failed to retrieve");
         }
 
-        if let Some(zcsvs_running) = result.zcsvs_status {
-            if zcsvs_running {
-                println!("🟢 zcsvs Process: Running");
-            } else {
-                println!("🔴 zcsvs Process: Not running");
-            }
-        } else {
-            println!("❌ zcsvs Process: Failed to check");
+        // if let Some(zcsvs_running) = result.zcsvs_status {
+        //     if zcsvs_running {
+        //         println!("🟢 zcsvs Process: Running");
+        //     } else {
+        //         println!("🔴 zcsvs Process: Not running");
+        //     }
+        // } else {
+        //     println!("❌ zcsvs Process: Failed to check");
+        // }
+        if let Some(zcsvs_running) = result.zcsvs_status
+            && zcsvs_running
+        {
+            println!("🟢 zcsvs Process: Running");
+        }
+        if let Some(finalize_running) = result.finalize_status
+            && finalize_running
+        {
+            println!("🟢 finalize Process: Running");
         }
 
         if let Some(disk_space) = &result.free_disk_space {
