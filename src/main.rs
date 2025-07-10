@@ -27,6 +27,7 @@ struct InstanceResults {
     free_disk_space: Option<String>,
     zcsvs_status: Option<bool>,
     finalize_status: Option<bool>,
+    s3_sync_status: Option<bool>,
     connection_error: Option<String>,
 }
 
@@ -134,17 +135,20 @@ async fn process_instance(instance: &InstanceInfo) -> InstanceResults {
     };
 
     match connect_and_execute_commands(ip, &instance.name).await {
-        Ok((timestep, csv_count, disk_space, zcsvs_running, finalize_running)) => InstanceResults {
-            instance_id: instance.instance_id.clone(),
-            public_ip: instance.public_ip.clone(),
-            name: instance.name.clone(),
-            timestep_result: Some(timestep),
-            csv_count: Some(csv_count),
-            free_disk_space: Some(disk_space),
-            zcsvs_status: Some(zcsvs_running),
-            finalize_status: Some(finalize_running),
-            ..Default::default()
-        },
+        Ok((timestep, csv_count, disk_space, zcsvs_running, finalize_running, s3_sync_running)) => {
+            InstanceResults {
+                instance_id: instance.instance_id.clone(),
+                public_ip: instance.public_ip.clone(),
+                name: instance.name.clone(),
+                timestep_result: Some(timestep),
+                csv_count: Some(csv_count),
+                free_disk_space: Some(disk_space),
+                zcsvs_status: Some(zcsvs_running),
+                finalize_status: Some(finalize_running),
+                s3_sync_status: Some(s3_sync_running),
+                ..Default::default()
+            }
+        }
         Err(e) => InstanceResults {
             instance_id: instance.instance_id.clone(),
             public_ip: instance.public_ip.clone(),
@@ -158,7 +162,7 @@ async fn process_instance(instance: &InstanceInfo) -> InstanceResults {
 async fn connect_and_execute_commands(
     ip: &str,
     instance_name: &str,
-) -> Result<(String, i32, String, bool, bool), Box<dyn std::error::Error>> {
+) -> Result<(String, i32, String, bool, bool, bool), Box<dyn std::error::Error>> {
     // Connect to SSH
     let tcp = TcpStream::connect(format!("{}:22", ip))?;
     let mut sess = Session::new()?;
@@ -203,6 +207,9 @@ async fn connect_and_execute_commands(
     // Check if finalize process is running
     let finalize_check = execute_ssh_command(&sess, "ps aux | grep '[f]inalize' | grep -v grep")?;
     let finalize_running = !finalize_check.is_empty();
+    // Check if finalize process is running
+    let s3_sync_check = execute_ssh_command(&sess, "ps aux | grep '[s]3 sync' | grep -v grep")?;
+    let s3_sync_running = !s3_sync_check.is_empty();
 
     Ok((
         timestep_result,
@@ -210,6 +217,7 @@ async fn connect_and_execute_commands(
         disk_space,
         zcsvs_running,
         finalize_running,
+        s3_sync_running,
     ))
 }
 
@@ -288,6 +296,11 @@ fn print_summary_report(results: &[InstanceResults]) {
             && finalize_running
         {
             println!("🟢 finalize Process: Running");
+        }
+        if let Some(s3_sync_running) = result.s3_sync_status
+            && s3_sync_running
+        {
+            println!("🟢 s3 sync Process: Running");
         }
 
         if let Some(disk_space) = &result.free_disk_space {
