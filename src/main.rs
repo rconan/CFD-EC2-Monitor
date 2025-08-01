@@ -25,9 +25,7 @@ struct InstanceResults {
     timestep_result: Option<String>,
     csv_count: Option<i32>,
     free_disk_space: Option<String>,
-    zcsvs_status: Option<bool>,
-    finalize_status: Option<bool>,
-    s3_sync_status: Option<bool>,
+    current_process: Option<String>,
     connection_error: Option<String>,
 }
 
@@ -135,20 +133,16 @@ async fn process_instance(instance: &InstanceInfo) -> InstanceResults {
     };
 
     match connect_and_execute_commands(ip, &instance.name).await {
-        Ok((timestep, csv_count, disk_space, zcsvs_running, finalize_running, s3_sync_running)) => {
-            InstanceResults {
-                instance_id: instance.instance_id.clone(),
-                public_ip: instance.public_ip.clone(),
-                name: instance.name.clone(),
-                timestep_result: Some(timestep),
-                csv_count: Some(csv_count),
-                free_disk_space: Some(disk_space),
-                zcsvs_status: Some(zcsvs_running),
-                finalize_status: Some(finalize_running),
-                s3_sync_status: Some(s3_sync_running),
-                ..Default::default()
-            }
-        }
+        Ok((timestep, csv_count, disk_space, current_process)) => InstanceResults {
+            instance_id: instance.instance_id.clone(),
+            public_ip: instance.public_ip.clone(),
+            name: instance.name.clone(),
+            timestep_result: Some(timestep),
+            csv_count: Some(csv_count),
+            free_disk_space: Some(disk_space),
+            current_process: Some(current_process),
+            ..Default::default()
+        },
         Err(e) => InstanceResults {
             instance_id: instance.instance_id.clone(),
             public_ip: instance.public_ip.clone(),
@@ -162,7 +156,7 @@ async fn process_instance(instance: &InstanceInfo) -> InstanceResults {
 async fn connect_and_execute_commands(
     ip: &str,
     instance_name: &str,
-) -> Result<(String, i32, String, bool, bool, bool), Box<dyn std::error::Error>> {
+) -> Result<(String, i32, String, String), Box<dyn std::error::Error>> {
     // Connect to SSH
     let tcp = TcpStream::connect(format!("{}:22", ip))?;
     let mut sess = Session::new()?;
@@ -201,24 +195,22 @@ async fn connect_and_execute_commands(
     let csv_count = csv_count_str.trim().parse::<i32>().unwrap_or(0);
     let disk_space = execute_ssh_command(&sess, "df -h / | tail -n1 | awk '{print $4}'")?;
 
-    // Check if zcsvs process is running
-    let zcsvs_check = execute_ssh_command(&sess, "ps aux | grep '[z]csvs' | grep -v grep")?;
-    let zcsvs_running = !zcsvs_check.is_empty();
-    // Check if finalize process is running
-    let finalize_check = execute_ssh_command(&sess, "ps aux | grep '[f]inalize' | grep -v grep")?;
-    let finalize_running = !finalize_check.is_empty();
-    // Check if finalize process is running
+    // Check which process is currently running (priority: s3 sync > finalize > zcsvs)
     let s3_sync_check = execute_ssh_command(&sess, "ps aux | grep '[s]3 sync' | grep -v grep")?;
-    let s3_sync_running = !s3_sync_check.is_empty();
+    let finalize_check = execute_ssh_command(&sess, "ps aux | grep '[f]inalize' | grep -v grep")?;
+    let zcsvs_check = execute_ssh_command(&sess, "ps aux | grep '[z]csvs' | grep -v grep")?;
 
-    Ok((
-        timestep_result,
-        csv_count,
-        disk_space,
-        zcsvs_running,
-        finalize_running,
-        s3_sync_running,
-    ))
+    let current_process = if !s3_sync_check.is_empty() {
+        "s3 sync".to_string()
+    } else if !finalize_check.is_empty() {
+        "finalize".to_string()
+    } else if !zcsvs_check.is_empty() {
+        "zcsvs".to_string()
+    } else {
+        "none".to_string()
+    };
+
+    Ok((timestep_result, csv_count, disk_space, current_process))
 }
 
 fn execute_ssh_command(
@@ -261,7 +253,7 @@ fn print_summary_report(results: &[InstanceResults]) -> Result<(), Box<dyn std::
         "TimeStep",
         "CSV Count",
         "Free Disk",
-        "zcsvs Status",
+        "Current Process",
         "Connection Status"
     );
     println!("{}", "-".repeat(120));
@@ -283,53 +275,63 @@ fn print_summary_report(results: &[InstanceResults]) -> Result<(), Box<dyn std::
         //     result.public_ip.clone()
         // };
 
-        let (timestep_display, csv_count_display, disk_display, zcsvs_display, connection_display) =
-            if let Some(error) = &result.connection_error {
-                let error_msg = if error.len() > 18 {
-                    format!("{}...", &error[..15])
-                } else {
-                    error.clone()
-                };
-                (
-                    "❌ Failed".to_string(),
-                    "❌ Failed".to_string(),
-                    "❌ Failed".to_string(),
-                    "❌ Failed".to_string(),
-                    error_msg,
-                )
+        let (
+            timestep_display,
+            csv_count_display,
+            disk_display,
+            process_display,
+            connection_display,
+        ) = if let Some(error) = &result.connection_error {
+            let error_msg = if error.len() > 18 {
+                format!("{}...", &error[..15])
             } else {
-                let timestep = match &result.timestep_result {
-                    Some(ts) => {
-                        let i = ts.find(':').unwrap();
-                        let (a, b) = ts.split_at(i);
-                        format!("({}){:8.2}", &a[10..], &b[6..].trim().parse::<f64>()?)
-                        // if ts.len() > 33 {
-                        //     format!("{}...", &ts[10..30])
-                        // } else {
-                        //     (&ts[10..]).to_string()
-                        // }
-                    }
-                    None => "❌ Failed".to_string(),
-                };
-
-                let csv_count = match result.csv_count {
-                    Some(count) => count.to_string(),
-                    None => "❌ Failed".to_string(),
-                };
-
-                let disk = match &result.free_disk_space {
-                    Some(space) => space.clone(),
-                    None => "❌ Failed".to_string(),
-                };
-
-                let zcsvs = match result.zcsvs_status {
-                    Some(true) => "🟢 Running".to_string(),
-                    Some(false) => "🔴 Stopped".to_string(),
-                    None => "❌ Failed".to_string(),
-                };
-
-                (timestep, csv_count, disk, zcsvs, "✅ Success".to_string())
+                error.clone()
             };
+            (
+                "❌ Failed".to_string(),
+                "❌ Failed".to_string(),
+                "❌ Failed".to_string(),
+                "❌ Failed".to_string(),
+                error_msg,
+            )
+        } else {
+            let timestep = match &result.timestep_result {
+                Some(ts) => {
+                    let i = ts.find(':').unwrap();
+                    let (a, b) = ts.split_at(i);
+                    format!("({}){:8.2}", &a[10..], &b[6..].trim().parse::<f64>()?)
+                    // if ts.len() > 33 {
+                    //     format!("{}...", &ts[10..30])
+                    // } else {
+                    //     (&ts[10..]).to_string()
+                    // }
+                }
+                None => "❌ Failed".to_string(),
+            };
+
+            let csv_count = match result.csv_count {
+                Some(count) => count.to_string(),
+                None => "❌ Failed".to_string(),
+            };
+
+            let disk = match &result.free_disk_space {
+                Some(space) => space.clone(),
+                None => "❌ Failed".to_string(),
+            };
+
+            let process = match &result.current_process {
+                Some(proc) => match proc.as_str() {
+                    "zcsvs" => "🟢 zcsvs".to_string(),
+                    "finalize" => "🟡 finalize".to_string(),
+                    "s3 sync" => "🔵 s3 sync".to_string(),
+                    "none" => "⚪ none".to_string(),
+                    _ => proc.clone(),
+                },
+                None => "❌ Failed".to_string(),
+            };
+
+            (timestep, csv_count, disk, process, "✅ Success".to_string())
+        };
 
         println!(
             "{:<20} {:>15} {:>15} {:>12} {:>15} {:<12} {:<20}",
@@ -338,7 +340,7 @@ fn print_summary_report(results: &[InstanceResults]) -> Result<(), Box<dyn std::
             timestep_display,
             csv_count_display,
             disk_display,
-            zcsvs_display,
+            process_display,
             connection_display
         );
     }
@@ -351,18 +353,31 @@ fn print_summary_report(results: &[InstanceResults]) -> Result<(), Box<dyn std::
         .iter()
         .filter(|r| r.connection_error.is_none())
         .count();
-    let running_zcsvs = results
+    let zcsvs_count = results
         .iter()
-        .filter(|r| r.zcsvs_status == Some(true))
+        .filter(|r| r.current_process.as_ref() == Some(&"zcsvs".to_string()))
         .count();
-    let stopped_zcsvs = results
+    let finalize_count = results
         .iter()
-        .filter(|r| r.zcsvs_status == Some(false))
+        .filter(|r| r.current_process.as_ref() == Some(&"finalize".to_string()))
+        .count();
+    let s3_sync_count = results
+        .iter()
+        .filter(|r| r.current_process.as_ref() == Some(&"s3 sync".to_string()))
+        .count();
+    let idle_count = results
+        .iter()
+        .filter(|r| r.current_process.as_ref() == Some(&"none".to_string()))
         .count();
 
     println!(
-        "Summary: {} total instances | {} successful connections | {} running zcsvs | {} stopped zcsvs",
-        total_instances, successful_connections, running_zcsvs, stopped_zcsvs
+        "Summary: {} total instances | {} successful connections | {} zcsvs | {} finalize | {} s3 sync | {} idle",
+        total_instances,
+        successful_connections,
+        zcsvs_count,
+        finalize_count,
+        s3_sync_count,
+        idle_count
     );
 
     println!("{}", "=".repeat(120));
