@@ -247,8 +247,129 @@ fn execute_ssh_command(
     Ok(output.trim().to_string())
 }
 
-fn print_summary_report(results: &[InstanceResults]) {
+fn print_summary_report(results: &[InstanceResults]) -> Result<(), Box<dyn std::error::Error>> {
     let local: DateTime<Local> = Local::now();
+    println!("{}", "\n".to_string() + "=".repeat(120).as_str());
+    println!("SUMMARY REPORT @ {local}");
+    println!("{}", "=".repeat(120));
+
+    // Table headers
+    println!(
+        "{:<20} {:^15} {:^15} {:^12} {:^15} {:<12} {:<20}",
+        "Instance Name",
+        "Public IP",
+        "TimeStep",
+        "CSV Count",
+        "Free Disk",
+        "zcsvs Status",
+        "Connection Status"
+    );
+    println!("{}", "-".repeat(120));
+
+    for result in results {
+        let instance_name = if result.name.len() > 18 {
+            format!("{}...", &result.name[..15])
+        } else {
+            result.name.clone()
+        };
+
+        let public_ip = match &result.public_ip {
+            Some(ip) => ip,
+            None => "-",
+        };
+        // let public_ip = if result.public_ip.len() > 13 {
+        //     format!("{}...", &result.public_ip[..10])
+        // } else {
+        //     result.public_ip.clone()
+        // };
+
+        let (timestep_display, csv_count_display, disk_display, zcsvs_display, connection_display) =
+            if let Some(error) = &result.connection_error {
+                let error_msg = if error.len() > 18 {
+                    format!("{}...", &error[..15])
+                } else {
+                    error.clone()
+                };
+                (
+                    "❌ Failed".to_string(),
+                    "❌ Failed".to_string(),
+                    "❌ Failed".to_string(),
+                    "❌ Failed".to_string(),
+                    error_msg,
+                )
+            } else {
+                let timestep = match &result.timestep_result {
+                    Some(ts) => {
+                        let i = ts.find(':').unwrap();
+                        let (a, b) = ts.split_at(i);
+                        format!("({}){:8.2}", &a[10..], &b[6..].trim().parse::<f64>()?)
+                        // if ts.len() > 33 {
+                        //     format!("{}...", &ts[10..30])
+                        // } else {
+                        //     (&ts[10..]).to_string()
+                        // }
+                    }
+                    None => "❌ Failed".to_string(),
+                };
+
+                let csv_count = match result.csv_count {
+                    Some(count) => count.to_string(),
+                    None => "❌ Failed".to_string(),
+                };
+
+                let disk = match &result.free_disk_space {
+                    Some(space) => space.clone(),
+                    None => "❌ Failed".to_string(),
+                };
+
+                let zcsvs = match result.zcsvs_status {
+                    Some(true) => "🟢 Running".to_string(),
+                    Some(false) => "🔴 Stopped".to_string(),
+                    None => "❌ Failed".to_string(),
+                };
+
+                (timestep, csv_count, disk, zcsvs, "✅ Success".to_string())
+            };
+
+        println!(
+            "{:<20} {:>15} {:>15} {:>12} {:>15} {:<12} {:<20}",
+            instance_name,
+            public_ip,
+            timestep_display,
+            csv_count_display,
+            disk_display,
+            zcsvs_display,
+            connection_display
+        );
+    }
+
+    println!("{}", "-".repeat(120));
+
+    // Summary statistics
+    let total_instances = results.len();
+    let successful_connections = results
+        .iter()
+        .filter(|r| r.connection_error.is_none())
+        .count();
+    let running_zcsvs = results
+        .iter()
+        .filter(|r| r.zcsvs_status == Some(true))
+        .count();
+    let stopped_zcsvs = results
+        .iter()
+        .filter(|r| r.zcsvs_status == Some(false))
+        .count();
+
+    println!(
+        "Summary: {} total instances | {} successful connections | {} running zcsvs | {} stopped zcsvs",
+        total_instances, successful_connections, running_zcsvs, stopped_zcsvs
+    );
+
+    println!("{}", "=".repeat(120));
+    Ok(())
+}
+/* fn print_summary_report(results: &[InstanceResults]) {
+>>>>>>> Conflict 1 of 1 ends
     println!("{}", "\n".to_string() + "=".repeat(80).as_str());
     println!("SUMMARY REPORT @ {local}");
     println!("{}", "=".repeat(80));
@@ -312,4 +433,4 @@ fn print_summary_report(results: &[InstanceResults]) {
 
     println!("{}", "\n".to_owned() + "=".repeat(80).as_str());
     println!("Report completed for {} instances", results.len());
-}
+} */
