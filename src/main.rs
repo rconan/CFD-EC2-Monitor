@@ -2,6 +2,7 @@ use aws_config::BehaviorVersion;
 use aws_sdk_ec2::{Client, types::Filter};
 use chrono::{DateTime, Local};
 use ssh2::Session;
+use std::collections::HashMap;
 use std::env;
 use std::fmt::Display;
 use std::io::prelude::*;
@@ -32,11 +33,12 @@ struct InstanceResults {
     connection_error: Option<String>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct TimeStep {
     step: usize,
     time: f64,
     total_step: usize,
+    step_increase: Option<usize>,
 }
 impl TimeStep {
     pub fn new(case: &str, time_step: &str) -> Result<Self, Box<dyn std::error::Error>> {
@@ -52,6 +54,7 @@ impl TimeStep {
                 "17ms" => 900,
                 _ => 900,
             },
+            step_increase: None,
         })
     }
 }
@@ -71,6 +74,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await;
 
     let client = Client::new(&config);
+    let mut previous_timesteps: HashMap<String, TimeStep> = HashMap::new();
 
     println!("🚀 Starting EC2 Monitor - Refreshing every 2 minutes");
     println!("Press Ctrl+C to stop monitoring\n");
@@ -82,7 +86,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("\n👋 Monitoring stopped by user");
                 break;
             }
-            _ = monitor_cycle(&client) => {
+            _ = monitor_cycle(&client, &mut previous_timesteps) => {
                 // Sleep for 2 minutes before next cycle
                 println!("\n⏰ Next update in 2 minutes...");
                 sleep(Duration::from_secs(120)).await;
@@ -93,7 +97,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn monitor_cycle(client: &Client) -> Result<(), Box<dyn std::error::Error>> {
+async fn monitor_cycle(
+    client: &Client,
+    previous_timesteps: &mut HashMap<String, TimeStep>,
+) -> Result<(), Box<dyn std::error::Error>> {
     // Clear terminal for clean display
     clear_terminal();
 
@@ -115,7 +122,19 @@ async fn monitor_cycle(client: &Client) -> Result<(), Box<dyn std::error::Error>
             instance.name, instance.instance_id
         );
 
-        let result = process_instance(instance).await?;
+        let mut result = process_instance(instance).await?;
+
+        // Calculate step increase if we have a previous timestep
+        if let Some(current_timestep) = &mut result.timestep_result {
+            if let Some(previous_timestep) = previous_timesteps.get(&instance.name) {
+                let step_increase = current_timestep.step.saturating_sub(previous_timestep.step);
+                current_timestep.step_increase = Some(step_increase);
+            }
+
+            // Store current timestep for next iteration
+            previous_timesteps.insert(instance.name.clone(), current_timestep.clone());
+        }
+
         results.push(result);
     }
 
