@@ -8,6 +8,8 @@ use std::io::prelude::*;
 use std::net::TcpStream;
 use std::path::Path;
 use tokio;
+use tokio::signal;
+use tokio::time::{Duration, sleep};
 
 #[derive(Debug, Default)]
 #[allow(dead_code)]
@@ -70,6 +72,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let client = Client::new(&config);
 
+    println!("🚀 Starting EC2 Monitor - Refreshing every 2 minutes");
+    println!("Press Ctrl+C to stop monitoring\n");
+
+    // Continuous monitoring loop
+    loop {
+        tokio::select! {
+            _ = signal::ctrl_c() => {
+                println!("\n👋 Monitoring stopped by user");
+                break;
+            }
+            _ = monitor_cycle(&client) => {
+                // Sleep for 2 minutes before next cycle
+                println!("\n⏰ Next update in 2 minutes...");
+                sleep(Duration::from_secs(120)).await;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn monitor_cycle(client: &Client) -> Result<(), Box<dyn std::error::Error>> {
+    // Clear terminal for clean display
+    clear_terminal();
+
     // Find all c8g.48xlarge instances
     let instances = find_target_instances(&client).await?;
 
@@ -78,17 +105,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    println!("Found {} c8g.48xlarge instances:", instances.len());
+    println!("🔍 Found {} c8g.48xlarge instances:", instances.len());
 
     // Process each instance
     let mut results = Vec::new();
-    for instance in instances {
+    for instance in &instances {
         println!(
             "Processing instance: {} ({})",
             instance.name, instance.instance_id
         );
 
-        let result = process_instance(&instance).await?;
+        let result = process_instance(instance).await?;
         results.push(result);
     }
 
@@ -96,6 +123,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     print_summary_report(&results)?;
 
     Ok(())
+}
+
+fn clear_terminal() {
+    // ANSI escape sequence to clear screen and move cursor to top
+    print!("\x1B[2J\x1B[1;1H");
+    std::io::stdout().flush().unwrap();
 }
 
 async fn find_target_instances(
