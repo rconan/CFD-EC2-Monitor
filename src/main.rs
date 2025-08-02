@@ -3,6 +3,7 @@ use aws_sdk_ec2::{Client, types::Filter};
 use chrono::{DateTime, Local};
 use ssh2::Session;
 use std::env;
+use std::fmt::Display;
 use std::io::prelude::*;
 use std::net::TcpStream;
 use std::path::Path;
@@ -22,11 +23,41 @@ struct InstanceResults {
     instance_id: String,
     public_ip: Option<String>,
     name: String,
-    timestep_result: Option<String>,
+    timestep_result: Option<TimeStep>,
     csv_count: Option<i32>,
     free_disk_space: Option<String>,
     current_process: Option<String>,
     connection_error: Option<String>,
+}
+
+#[derive(Debug, Default)]
+struct TimeStep {
+    step: usize,
+    time: f64,
+    total_step: usize,
+}
+impl TimeStep {
+    pub fn new(case: &str, time_step: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        let i = time_step.find(':').unwrap();
+        let (a, b) = time_step.split_at(i);
+        Ok(Self {
+            step: a[10..].trim().parse::<usize>()?,
+            time: b[6..].trim().parse::<f64>()?,
+            total_step: match case.split('_').last().unwrap() {
+                "2ms" => 1200,
+                "7ms" => 900,
+                "12ms" => 900,
+                "17ms" => 900,
+                _ => 900,
+            },
+        })
+    }
+}
+
+impl Display for TimeStep {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "({}){:8.2}", self.step, self.time)
+    }
 }
 
 #[tokio::main]
@@ -57,12 +88,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             instance.name, instance.instance_id
         );
 
-        let result = process_instance(&instance).await;
+        let result = process_instance(&instance).await?;
         results.push(result);
     }
 
     // Print summary report
-    print_summary_report(&results);
+    print_summary_report(&results)?;
 
     Ok(())
 }
@@ -118,39 +149,43 @@ async fn find_target_instances(
     Ok(instances)
 }
 
-async fn process_instance(instance: &InstanceInfo) -> InstanceResults {
+async fn process_instance(
+    instance: &InstanceInfo,
+) -> Result<InstanceResults, Box<dyn std::error::Error>> {
     let ip = match &instance.public_ip {
         Some(ip) => ip,
         None => {
-            return InstanceResults {
+            return Ok(InstanceResults {
                 instance_id: instance.instance_id.clone(),
                 public_ip: instance.public_ip.clone(),
                 name: instance.name.clone(),
                 connection_error: Some("No public IP available".to_string()),
                 ..Default::default()
-            };
+            });
         }
     };
 
-    match connect_and_execute_commands(ip, &instance.name).await {
-        Ok((timestep, csv_count, disk_space, current_process)) => InstanceResults {
-            instance_id: instance.instance_id.clone(),
-            public_ip: instance.public_ip.clone(),
-            name: instance.name.clone(),
-            timestep_result: Some(timestep),
-            csv_count: Some(csv_count),
-            free_disk_space: Some(disk_space),
-            current_process: Some(current_process),
-            ..Default::default()
+    Ok(
+        match connect_and_execute_commands(ip, &instance.name).await {
+            Ok((timestep, csv_count, disk_space, current_process)) => InstanceResults {
+                instance_id: instance.instance_id.clone(),
+                public_ip: instance.public_ip.clone(),
+                name: instance.name.clone(),
+                timestep_result: Some(TimeStep::new(&instance.name, &timestep)?),
+                csv_count: Some(csv_count),
+                free_disk_space: Some(disk_space),
+                current_process: Some(current_process),
+                ..Default::default()
+            },
+            Err(e) => InstanceResults {
+                instance_id: instance.instance_id.clone(),
+                public_ip: instance.public_ip.clone(),
+                name: instance.name.clone(),
+                connection_error: Some(e.to_string()),
+                ..Default::default()
+            },
         },
-        Err(e) => InstanceResults {
-            instance_id: instance.instance_id.clone(),
-            public_ip: instance.public_ip.clone(),
-            name: instance.name.clone(),
-            connection_error: Some(e.to_string()),
-            ..Default::default()
-        },
-    }
+    )
 }
 
 async fn connect_and_execute_commands(
@@ -296,16 +331,7 @@ fn print_summary_report(results: &[InstanceResults]) -> Result<(), Box<dyn std::
             )
         } else {
             let timestep = match &result.timestep_result {
-                Some(ts) => {
-                    let i = ts.find(':').unwrap();
-                    let (a, b) = ts.split_at(i);
-                    format!("({}){:8.2}", &a[10..], &b[6..].trim().parse::<f64>()?)
-                    // if ts.len() > 33 {
-                    //     format!("{}...", &ts[10..30])
-                    // } else {
-                    //     (&ts[10..]).to_string()
-                    // }
-                }
+                Some(ts) => ts.to_string(),
                 None => "❌ Failed".to_string(),
             };
 
