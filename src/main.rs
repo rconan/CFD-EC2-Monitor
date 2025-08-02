@@ -30,6 +30,7 @@ struct InstanceResults {
     csv_count: Option<i32>,
     free_disk_space: Option<String>,
     current_process: Option<String>,
+    eta: Option<String>,
     connection_error: Option<String>,
 }
 
@@ -48,20 +49,56 @@ impl TimeStep {
             step: a[10..].trim().parse::<usize>()?,
             time: b[6..].trim().parse::<f64>()?,
             total_step: match case.split('_').last().unwrap() {
-                "2ms" => 1200,
-                "7ms" => 900,
-                "12ms" => 900,
-                "17ms" => 900,
-                _ => 900,
-            },
+                "2ms" => Ok(24_000),
+                "7ms" | "12ms" | "17ms" => Ok(18_000),
+                x => Err(format!(
+                    "valid wind speeds are 2m/s, 7m/s, 12m/s or 17m/s, found {}m/s",
+                    x
+                )),
+            }?,
             step_increase: None,
         })
+    }
+
+    pub fn calculate_eta(&self) -> Option<String> {
+        // Only calculate ETA if we have a step increase (not the first run)
+        if let Some(step_increase) = self.step_increase {
+            if step_increase > 0 {
+                let remaining_steps = self.total_step.saturating_sub(self.step);
+                if remaining_steps == 0 {
+                    return Some("Complete".to_string());
+                }
+
+                // Calculate minutes needed based on current rate
+                // step_increase is over 2 minutes, so minutes per step = 2 / step_increase
+                let minutes_per_step = 2.0 / step_increase as f64;
+                let total_minutes = remaining_steps as f64 * minutes_per_step;
+
+                // Convert to hours and minutes
+                let hours = (total_minutes / 60.0).floor() as u64;
+                let minutes = (total_minutes % 60.0).round() as u64;
+
+                if hours > 0 {
+                    return Some(format!("{}h {}m", hours, minutes));
+                } else {
+                    return Some(format!("{}m", minutes));
+                }
+            } else {
+                return Some("Stalled".to_string());
+            }
+        }
+
+        None // First run, no ETA available
     }
 }
 
 impl Display for TimeStep {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "({}){:8.2}", self.step, self.time)
+        if let Some(inc) = self.step_increase {
+            write!(f, "(+{:}){:8.2}", inc, self.time)
+        } else {
+            write!(f, "({}){:8.2}", self.step, self.time)
+        }
     }
 }
 
@@ -78,6 +115,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("🚀 Starting EC2 Monitor - Refreshing every 2 minutes");
     println!("Press Ctrl+C to stop monitoring\n");
+
+    // Clear terminal for clean display
+    clear_terminal();
 
     // Continuous monitoring loop
     loop {
@@ -101,9 +141,6 @@ async fn monitor_cycle(
     client: &Client,
     previous_timesteps: &mut HashMap<String, TimeStep>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // Clear terminal for clean display
-    clear_terminal();
-
     // Find all c8g.48xlarge instances
     let instances = find_target_instances(&client).await?;
 
@@ -131,12 +168,18 @@ async fn monitor_cycle(
                 current_timestep.step_increase = Some(step_increase);
             }
 
+            // Calculate and store ETA
+            result.eta = current_timestep.calculate_eta();
+
             // Store current timestep for next iteration
             previous_timesteps.insert(instance.name.clone(), current_timestep.clone());
         }
 
         results.push(result);
     }
+
+    // Clear terminal for clean display
+    clear_terminal();
 
     // Print summary report
     print_summary_report(&results)?;
@@ -336,7 +379,7 @@ fn print_summary_report(results: &[InstanceResults]) -> Result<(), Box<dyn std::
     println!(
         "{:<20} {:^15} {:^15} {:^12} {:^15} {:<12} {:<20}",
         "Instance Name",
-        "Public IP",
+        "ETA",
         "TimeStep",
         "CSV Count",
         "Free Disk",
@@ -352,15 +395,10 @@ fn print_summary_report(results: &[InstanceResults]) -> Result<(), Box<dyn std::
             result.name.clone()
         };
 
-        let public_ip = match &result.public_ip {
-            Some(ip) => ip,
-            None => "-",
+        let eta_display = match &result.eta {
+            Some(eta) => eta.as_str(),
+            None => "Calculating...",
         };
-        // let public_ip = if result.public_ip.len() > 13 {
-        //     format!("{}...", &result.public_ip[..10])
-        // } else {
-        //     result.public_ip.clone()
-        // };
 
         let (
             timestep_display,
@@ -414,7 +452,7 @@ fn print_summary_report(results: &[InstanceResults]) -> Result<(), Box<dyn std::
         println!(
             "{:<20} {:>15} {:>15} {:>12} {:>15} {:<12} {:<20}",
             instance_name,
-            public_ip,
+            eta_display,
             timestep_display,
             csv_count_display,
             disk_display,
