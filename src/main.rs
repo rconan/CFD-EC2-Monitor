@@ -8,9 +8,51 @@ use std::fmt::Display;
 use std::io::prelude::*;
 use std::net::TcpStream;
 use std::path::Path;
-use tokio;
+use thiserror::Error;
 use tokio::signal;
 use tokio::time::{Duration, sleep};
+
+#[derive(Error, Debug)]
+pub enum MonitorError {
+    #[error("AWS SDK error: {0}")]
+    AwsSdk(String),
+    
+    #[error("SSH connection error: {0}")]
+    SshConnection(#[from] ssh2::Error),
+    
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+    
+    #[error("Environment variable error: {0}")]
+    Env(#[from] std::env::VarError),
+    
+    #[error("Parse int error: {0}")]
+    ParseInt(#[from] std::num::ParseIntError),
+    
+    #[error("Parse float error: {0}")]
+    ParseFloat(#[from] std::num::ParseFloatError),
+    
+    #[error("No public IP available for instance")]
+    NoPublicIp,
+    
+    #[error("SSH key file not found: {path}")]
+    KeyFileNotFound { path: String },
+    
+    #[error("SSH authentication failed")]
+    AuthenticationFailed,
+    
+    #[error("Invalid wind speed: {speed}. Valid speeds are 2m/s, 7m/s, 12m/s, or 17m/s")]
+    InvalidWindSpeed { speed: String },
+    
+    #[error("SSH command failed with exit code {code}: {stderr}")]
+    SshCommandFailed { code: i32, stderr: String },
+    
+    #[error("Timestep parsing failed: {reason}")]
+    TimestepParsing { reason: String },
+    
+    #[error("Task join error: {0}")]
+    TaskJoin(#[from] tokio::task::JoinError),
+}
 
 #[derive(Debug, Default, Clone)]
 #[allow(dead_code)]
@@ -42,7 +84,7 @@ struct TimeStep {
     step_increase: Option<usize>,
 }
 impl TimeStep {
-    pub fn new(case: &str, time_step: &str) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn new(case: &str, time_step: &str) -> Result<Self, MonitorError> {
         let i = time_step.find(':').unwrap();
         let (a, b) = time_step.split_at(i);
         Ok(Self {
@@ -51,10 +93,7 @@ impl TimeStep {
             total_step: match case.split('_').last().unwrap() {
                 "2ms" => Ok(24_000),
                 "7ms" | "12ms" | "17ms" => Ok(18_000),
-                x => Err(format!(
-                    "valid wind speeds are 2m/s, 7m/s, 12m/s or 17m/s, found {}m/s",
-                    x
-                )),
+                x => Err(MonitorError::InvalidWindSpeed { speed: x.to_string() }),
             }?,
             step_increase: None,
         })
@@ -103,7 +142,7 @@ impl Display for TimeStep {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn main() -> Result<(), MonitorError> {
     // Initialize AWS configuration
     let config = aws_config::defaults(BehaviorVersion::latest())
         .region(aws_config::Region::new("sa-east-1"))
@@ -140,7 +179,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 async fn monitor_cycle(
     client: &Client,
     previous_timesteps: &mut HashMap<String, TimeStep>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(), MonitorError> {
     // Find all c8g.48xlarge instances
     let instances = find_target_instances(&client).await?;
 
@@ -190,12 +229,16 @@ async fn monitor_cycle(
                         results.push(result);
                     }
                     Err(e) => {
-                        // Handle process_instance error
+                        // Handle process_instance error - convert MonitorError to InstanceResults
+                        let error_message = match &e {
+                            MonitorError::NoPublicIp => "No public IP available".to_string(),
+                            _ => format!("Processing error: {}", e),
+                        };
                         results.push(InstanceResults {
                             instance_id: instance.instance_id.clone(),
                             public_ip: instance.public_ip.clone(),
                             name: instance.name.clone(),
-                            connection_error: Some(format!("Processing error: {}", e)),
+                            connection_error: Some(error_message),
                             ..Default::default()
                         });
                     }
@@ -231,7 +274,7 @@ fn clear_terminal() {
 
 async fn find_target_instances(
     client: &Client,
-) -> Result<Vec<InstanceInfo>, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<Vec<InstanceInfo>, MonitorError> {
     let mut instances = Vec::new();
 
     // Create filters for instance type and running state
@@ -250,7 +293,8 @@ async fn find_target_instances(
         .describe_instances()
         .set_filters(Some(filters))
         .send()
-        .await?;
+        .await
+        .map_err(|e| MonitorError::AwsSdk(e.to_string()))?;
 
     for reservation in resp.reservations() {
         for instance in reservation.instances() {
@@ -282,23 +326,17 @@ async fn find_target_instances(
 
 async fn process_instance(
     instance: &InstanceInfo,
-) -> Result<InstanceResults, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<InstanceResults, MonitorError> {
     let ip = match &instance.public_ip {
         Some(ip) => ip,
         None => {
-            return Ok(InstanceResults {
-                instance_id: instance.instance_id.clone(),
-                public_ip: instance.public_ip.clone(),
-                name: instance.name.clone(),
-                connection_error: Some("No public IP available".to_string()),
-                ..Default::default()
-            });
+            return Err(MonitorError::NoPublicIp);
         }
     };
 
-    Ok(
-        match connect_and_execute_commands(ip, &instance.name).await {
-            Ok((timestep, csv_count, disk_space, current_process)) => InstanceResults {
+    match connect_and_execute_commands(ip, &instance.name).await {
+        Ok((timestep, csv_count, disk_space, current_process)) => {
+            Ok(InstanceResults {
                 instance_id: instance.instance_id.clone(),
                 public_ip: instance.public_ip.clone(),
                 name: instance.name.clone(),
@@ -307,22 +345,16 @@ async fn process_instance(
                 free_disk_space: Some(disk_space),
                 current_process: Some(current_process),
                 ..Default::default()
-            },
-            Err(e) => InstanceResults {
-                instance_id: instance.instance_id.clone(),
-                public_ip: instance.public_ip.clone(),
-                name: instance.name.clone(),
-                connection_error: Some(e.to_string()),
-                ..Default::default()
-            },
+            })
         },
-    )
+        Err(e) => Err(e),
+    }
 }
 
 async fn connect_and_execute_commands(
     ip: &str,
     instance_name: &str,
-) -> Result<(String, i32, String, String), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(String, i32, String, String), MonitorError> {
     // Connect to SSH
     let tcp = TcpStream::connect(format!("{}:22", ip))?;
     let mut sess = Session::new()?;
@@ -333,7 +365,7 @@ async fn connect_and_execute_commands(
     let keypair = env::var("AWS_KEYPAIR")?;
     let key_path = Path::new(&keypair);
     if !key_path.exists() {
-        return Err(format!("SSH key file {key_path:?} not found").into());
+        return Err(MonitorError::KeyFileNotFound { path: keypair });
     }
 
     // Try common usernames for different AMI types
@@ -382,7 +414,7 @@ async fn connect_and_execute_commands(
 fn execute_ssh_command(
     sess: &Session,
     command: &str,
-) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<String, MonitorError> {
     let mut channel = sess.channel_session()?;
     channel.exec(command)?;
 
@@ -396,16 +428,17 @@ fn execute_ssh_command(
         let mut stderr = String::new();
         channel.stderr().read_to_string(&mut stderr)?;
         if !stderr.trim().is_empty() {
-            return Err(
-                format!("Command failed with exit code {}: {}", exit_status, stderr).into(),
-            );
+            return Err(MonitorError::SshCommandFailed {
+                code: exit_status,
+                stderr,
+            });
         }
     }
 
     Ok(output.trim().to_string())
 }
 
-fn print_summary_report(results: &[InstanceResults]) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+fn print_summary_report(results: &[InstanceResults]) -> Result<(), MonitorError> {
     let local: DateTime<Local> = Local::now();
     println!("{}", "\n".to_string() + "=".repeat(120).as_str());
     println!("SUMMARY REPORT @ {local}");
