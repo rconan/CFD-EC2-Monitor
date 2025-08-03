@@ -12,7 +12,7 @@ use tokio;
 use tokio::signal;
 use tokio::time::{Duration, sleep};
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 #[allow(dead_code)]
 struct InstanceInfo {
     instance_id: String,
@@ -42,7 +42,7 @@ struct TimeStep {
     step_increase: Option<usize>,
 }
 impl TimeStep {
-    pub fn new(case: &str, time_step: &str) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(case: &str, time_step: &str) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let i = time_step.find(':').unwrap();
         let (a, b) = time_step.split_at(i);
         Ok(Self {
@@ -103,7 +103,7 @@ impl Display for TimeStep {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Initialize AWS configuration
     let config = aws_config::defaults(BehaviorVersion::latest())
         .region(aws_config::Region::new("sa-east-1"))
@@ -140,7 +140,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 async fn monitor_cycle(
     client: &Client,
     previous_timesteps: &mut HashMap<String, TimeStep>,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Find all c8g.48xlarge instances
     let instances = find_target_instances(&client).await?;
 
@@ -150,32 +150,68 @@ async fn monitor_cycle(
     }
 
     println!("🔍 Found {} c8g.48xlarge instances:", instances.len());
+    println!("🚀 Processing all instances in parallel...");
 
-    // Process each instance
+    // Process all instances in parallel using tokio::spawn
+    let mut tasks = Vec::new();
+    for instance in instances {
+        let instance_clone = instance.clone();
+        let task = tokio::spawn(async move {
+            println!(
+                "Processing instance: {} ({})",
+                instance_clone.name, instance_clone.instance_id
+            );
+            process_instance(&instance_clone).await
+        });
+        tasks.push((instance, task));
+    }
+
+    // Wait for all tasks to complete and collect results
     let mut results = Vec::new();
-    for instance in &instances {
-        println!(
-            "Processing instance: {} ({})",
-            instance.name, instance.instance_id
-        );
+    for (instance, task) in tasks {
+        match task.await {
+            Ok(process_result) => {
+                match process_result {
+                    Ok(mut result) => {
+                        // Calculate step increase if we have a previous timestep
+                        if let Some(current_timestep) = &mut result.timestep_result {
+                            if let Some(previous_timestep) = previous_timesteps.get(&instance.name) {
+                                let step_increase = current_timestep.step.saturating_sub(previous_timestep.step);
+                                current_timestep.step_increase = Some(step_increase);
+                            }
 
-        let mut result = process_instance(instance).await?;
+                            // Calculate and store ETA
+                            result.eta = current_timestep.calculate_eta();
 
-        // Calculate step increase if we have a previous timestep
-        if let Some(current_timestep) = &mut result.timestep_result {
-            if let Some(previous_timestep) = previous_timesteps.get(&instance.name) {
-                let step_increase = current_timestep.step.saturating_sub(previous_timestep.step);
-                current_timestep.step_increase = Some(step_increase);
+                            // Store current timestep for next iteration
+                            previous_timesteps.insert(instance.name.clone(), current_timestep.clone());
+                        }
+
+                        results.push(result);
+                    }
+                    Err(e) => {
+                        // Handle process_instance error
+                        results.push(InstanceResults {
+                            instance_id: instance.instance_id.clone(),
+                            public_ip: instance.public_ip.clone(),
+                            name: instance.name.clone(),
+                            connection_error: Some(format!("Processing error: {}", e)),
+                            ..Default::default()
+                        });
+                    }
+                }
             }
-
-            // Calculate and store ETA
-            result.eta = current_timestep.calculate_eta();
-
-            // Store current timestep for next iteration
-            previous_timesteps.insert(instance.name.clone(), current_timestep.clone());
+            Err(e) => {
+                // Handle tokio task join error
+                results.push(InstanceResults {
+                    instance_id: instance.instance_id.clone(),
+                    public_ip: instance.public_ip.clone(),
+                    name: instance.name.clone(),
+                    connection_error: Some(format!("Task error: {}", e)),
+                    ..Default::default()
+                });
+            }
         }
-
-        results.push(result);
     }
 
     // Clear terminal for clean display
@@ -195,7 +231,7 @@ fn clear_terminal() {
 
 async fn find_target_instances(
     client: &Client,
-) -> Result<Vec<InstanceInfo>, Box<dyn std::error::Error>> {
+) -> Result<Vec<InstanceInfo>, Box<dyn std::error::Error + Send + Sync>> {
     let mut instances = Vec::new();
 
     // Create filters for instance type and running state
@@ -246,7 +282,7 @@ async fn find_target_instances(
 
 async fn process_instance(
     instance: &InstanceInfo,
-) -> Result<InstanceResults, Box<dyn std::error::Error>> {
+) -> Result<InstanceResults, Box<dyn std::error::Error + Send + Sync>> {
     let ip = match &instance.public_ip {
         Some(ip) => ip,
         None => {
@@ -286,7 +322,7 @@ async fn process_instance(
 async fn connect_and_execute_commands(
     ip: &str,
     instance_name: &str,
-) -> Result<(String, i32, String, String), Box<dyn std::error::Error>> {
+) -> Result<(String, i32, String, String), Box<dyn std::error::Error + Send + Sync>> {
     // Connect to SSH
     let tcp = TcpStream::connect(format!("{}:22", ip))?;
     let mut sess = Session::new()?;
@@ -346,7 +382,7 @@ async fn connect_and_execute_commands(
 fn execute_ssh_command(
     sess: &Session,
     command: &str,
-) -> Result<String, Box<dyn std::error::Error>> {
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     let mut channel = sess.channel_session()?;
     channel.exec(command)?;
 
@@ -369,7 +405,7 @@ fn execute_ssh_command(
     Ok(output.trim().to_string())
 }
 
-fn print_summary_report(results: &[InstanceResults]) -> Result<(), Box<dyn std::error::Error>> {
+fn print_summary_report(results: &[InstanceResults]) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let local: DateTime<Local> = Local::now();
     println!("{}", "\n".to_string() + "=".repeat(120).as_str());
     println!("SUMMARY REPORT @ {local}");
