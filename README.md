@@ -58,6 +58,27 @@ The application will:
 5. Wait 6 minutes before the next monitoring cycle
 6. Press Ctrl+C to stop monitoring
 
+### Starting zcsvs Process
+
+Use the included `start_zcsvs.sh` script to start the zcsvs process on a specific instance:
+
+```bash
+# Make the script executable (first time only)
+chmod +x start_zcsvs.sh
+
+# Start zcsvs process on an instance
+./start_zcsvs.sh <instance_name>
+
+# Example
+./start_zcsvs.sh zen00az180_OS_2ms
+```
+
+The script will:
+1. Look up the instance's public IP address using the AWS EC2 API
+2. SSH into the instance using the `AWS_KEYPAIR` environment variable
+3. Start the zcsvs process in a detached tmux session
+4. Provide instructions for connecting to the tmux session
+
 ## Architecture
 
 The codebase is modularized into separate modules for better organization:
@@ -112,6 +133,23 @@ The application uses custom error types for better error reporting:
 - `KeyFileNotFound`: SSH key file issues
 - `SshCommandFailed`: Remote command execution failures
 - And more...
+
+## Utility Scripts
+
+### `start_zcsvs.sh`
+
+A shell script for remotely starting the zcsvs process on EC2 instances:
+
+**Features:**
+- Automatically looks up instance IP address by name using AWS EC2 API
+- Uses `AWS_KEYPAIR` environment variable for SSH authentication
+- Starts zcsvs process in a detached tmux session for persistence
+- Includes comprehensive error handling and user feedback
+
+**Requirements:**
+- AWS CLI configured with appropriate permissions
+- `AWS_KEYPAIR` environment variable set to SSH private key path
+- Target instance must be running and have a public IP address
 
 ## Dependencies
 
