@@ -162,6 +162,7 @@ async fn main() -> Result<(), MonitorError> {
 
     let client = Client::new(&config);
     let mut previous_timesteps: HashMap<String, TimeStep> = HashMap::new();
+    let mut instance_etas: HashMap<String, Vec<f64>> = HashMap::new(); // Track ETAs per instance
 
     println!("🚀 Starting EC2 Monitor - Refreshing every 6 minutes");
     println!("Press Ctrl+C to stop monitoring\n");
@@ -176,7 +177,7 @@ async fn main() -> Result<(), MonitorError> {
                 println!("\n👋 Monitoring stopped by user");
                 break;
             }
-            _ = monitor_cycle(&client, &mut previous_timesteps) => {
+            _ = monitor_cycle(&client, &mut previous_timesteps, &mut instance_etas) => {
                 // Sleep for 6 minutes before next cycle
                 println!("\n⏰ Next update in 6 minutes...");
                 sleep(Duration::from_secs(360)).await;
@@ -190,6 +191,7 @@ async fn main() -> Result<(), MonitorError> {
 async fn monitor_cycle(
     client: &Client,
     previous_timesteps: &mut HashMap<String, TimeStep>,
+    instance_etas: &mut HashMap<String, Vec<f64>>,
 ) -> Result<(), MonitorError> {
     // Find all c8g.48xlarge instances
     let instances = find_target_instances(&client).await?;
@@ -232,6 +234,15 @@ async fn monitor_cycle(
 
                             // Calculate and store ETA
                             result.eta = current_timestep.calculate_eta();
+                            
+                            // Collect ETA in minutes for median calculation per instance
+                            if let Some(eta_str) = &result.eta {
+                                if let Some(eta_minutes) = parse_eta_to_minutes(eta_str) {
+                                    instance_etas.entry(instance.name.clone())
+                                        .or_insert_with(Vec::new)
+                                        .push(eta_minutes);
+                                }
+                            }
 
                             // Store current timestep for next iteration
                             previous_timesteps.insert(instance.name.clone(), current_timestep.clone());
@@ -272,7 +283,7 @@ async fn monitor_cycle(
     clear_terminal();
 
     // Print summary report
-    print_summary_report(&results)?;
+    print_summary_report(&results, instance_etas)?;
 
     Ok(())
 }
@@ -449,24 +460,92 @@ fn execute_ssh_command(
     Ok(output.trim().to_string())
 }
 
-fn print_summary_report(results: &[InstanceResults]) -> Result<(), MonitorError> {
+fn parse_eta_to_minutes(eta_str: &str) -> Option<f64> {
+    // Skip special cases
+    if eta_str == "Complete" || eta_str == "Stalled" || eta_str == "Calculating..." {
+        return None;
+    }
+    
+    let mut total_minutes = 0.0;
+    
+    // Parse days, hours, minutes format like "2d 5h 30m" or "45m" or "3h 15m"
+    for part in eta_str.split_whitespace() {
+        if let Some(stripped) = part.strip_suffix('d') {
+            if let Ok(days) = stripped.parse::<f64>() {
+                total_minutes += days * 24.0 * 60.0;
+            }
+        } else if let Some(stripped) = part.strip_suffix('h') {
+            if let Ok(hours) = stripped.parse::<f64>() {
+                total_minutes += hours * 60.0;
+            }
+        } else if let Some(stripped) = part.strip_suffix('m') {
+            if let Ok(minutes) = stripped.parse::<f64>() {
+                total_minutes += minutes;
+            }
+        }
+    }
+    
+    if total_minutes > 0.0 {
+        Some(total_minutes)
+    } else {
+        None
+    }
+}
+
+fn calculate_median_eta(etas: &[f64]) -> Option<String> {
+    if etas.is_empty() {
+        return None;
+    }
+    
+    let mut sorted_etas = etas.to_vec();
+    sorted_etas.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    
+    let median_minutes = if sorted_etas.len() % 2 == 0 {
+        // Even number of elements - average of two middle values
+        let mid = sorted_etas.len() / 2;
+        (sorted_etas[mid - 1] + sorted_etas[mid]) / 2.0
+    } else {
+        // Odd number of elements - middle value
+        sorted_etas[sorted_etas.len() / 2]
+    };
+    
+    // Convert median minutes to days, hours, minutes format
+    let total_hours = median_minutes / 60.0;
+    let days = (total_hours / 24.0).floor() as u64;
+    let hours = (total_hours % 24.0).floor() as u64;
+    let minutes = (median_minutes % 60.0).round() as u64;
+    
+    if days > 0 {
+        if hours > 0 {
+            Some(format!("{}d {}h {}m", days, hours, minutes))
+        } else {
+            Some(format!("{}d {}m", days, minutes))
+        }
+    } else if hours > 0 {
+        Some(format!("{}h {}m", hours, minutes))
+    } else {
+        Some(format!("{}m", minutes))
+    }
+}
+
+fn print_summary_report(results: &[InstanceResults], instance_etas: &HashMap<String, Vec<f64>>) -> Result<(), MonitorError> {
     let local: DateTime<Local> = Local::now();
-    println!("{}", "\n".to_string() + "=".repeat(120).as_str());
+    println!("{}", "\n".to_string() + "=".repeat(125).as_str());
     println!("SUMMARY REPORT @ {local}");
-    println!("{}", "=".repeat(120));
+    println!("{}", "=".repeat(125));
 
     // Table headers
     println!(
         "{:<20} {:^15} {:^15} {:^12} {:^15} {:<12} {:<20}",
         "Instance Name",
-        "ETA",
+        "Median ETA",
         "TimeStep",
         "CSV Count",
         "Free Disk",
         "Current Process",
         "Connection Status"
     );
-    println!("{}", "-".repeat(120));
+    println!("{}", "-".repeat(125));
 
     for result in results {
         let instance_name = if result.name.len() > 18 {
@@ -475,9 +554,14 @@ fn print_summary_report(results: &[InstanceResults]) -> Result<(), MonitorError>
             result.name.clone()
         };
 
-        let eta_display = match &result.eta {
-            Some(eta) => eta.as_str(),
-            None => "Calculating...",
+        let median_eta_display = match instance_etas.get(&result.name) {
+            Some(etas) if etas.len() > 0 => {
+                match calculate_median_eta(etas) {
+                    Some(median) => median,
+                    None => "N/A".to_string(),
+                }
+            },
+            _ => "N/A".to_string(),
         };
 
         let (
@@ -532,7 +616,7 @@ fn print_summary_report(results: &[InstanceResults]) -> Result<(), MonitorError>
         println!(
             "{:<20} {:>15} {:>15} {:>12} {:>15} {:<12} {:<20}",
             instance_name,
-            eta_display,
+            median_eta_display,
             timestep_display,
             csv_count_display,
             disk_display,
@@ -541,7 +625,7 @@ fn print_summary_report(results: &[InstanceResults]) -> Result<(), MonitorError>
         );
     }
 
-    println!("{}", "-".repeat(120));
+    println!("{}", "-".repeat(125));
 
     // Summary statistics
     let total_instances = results.len();
@@ -576,7 +660,7 @@ fn print_summary_report(results: &[InstanceResults]) -> Result<(), MonitorError>
         idle_count
     );
 
-    println!("{}", "=".repeat(120));
+    println!("{}", "=".repeat(125));
     Ok(())
 }
 /* fn print_summary_report(results: &[InstanceResults]) {

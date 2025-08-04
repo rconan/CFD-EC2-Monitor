@@ -6,7 +6,7 @@ AWS EC2 monitoring tool for computational simulation jobs running on `c8g.48xlar
 
 This Rust application connects to the AWS EC2 API to find running instances, SSH into each instance in parallel to check simulation progress, and generates formatted summary reports showing:
 
-- Simulation timestep progress from `solve.out` files with ETA calculations (displayed in days, hours, and minutes)
+- Simulation timestep progress from `solve.out` files with median ETA calculations (displayed in days, hours, and minutes)
 - CSV file counts in instance directories  
 - Disk space usage
 - Process status for `zcsvs`, `finalize`, and `s3 sync` workflows
@@ -18,7 +18,7 @@ The tool refreshes every 6 minutes and processes all instances concurrently for 
 
 - **Parallel Processing**: All instances are monitored simultaneously using async tasks
 - **Custom Error Handling**: Comprehensive error types using `thiserror` for better debugging
-- **ETA Calculations**: Estimates completion time based on timestep progression (format: days, hours, minutes)
+- **Median ETA Calculations**: Tracks and displays median completion time per instance across monitoring cycles (format: days, hours, minutes)
 - **Real-time Monitoring**: Continuous monitoring with automatic refresh every 6 minutes
 - **Formatted Reports**: Clean, tabular output with color-coded status indicators
 
@@ -65,7 +65,7 @@ The application will:
 - **Instance Discovery**: Uses EC2 API filters to find `c8g.48xlarge` instances in running state
 - **Parallel SSH Monitoring**: Connects via SSH using `tokio::spawn` to execute remote commands concurrently
 - **Custom Error Handling**: `MonitorError` enum with specific variants for different failure modes
-- **ETA Calculation**: Tracks timestep progression and estimates completion time
+- **Median ETA Calculation**: Tracks timestep progression and calculates median completion time per instance
 - **Report Generation**: Formats and displays comprehensive status summaries with statistics
 
 ### Data Flow
@@ -73,9 +73,21 @@ The application will:
 1. Initialize AWS SDK client for `sa-east-1` region
 2. Query EC2 API for running instances
 3. Launch parallel SSH connections to collect metrics from all instances
-4. Calculate step increases and ETAs based on previous monitoring cycles
+4. Calculate step increases and track ETAs for median calculation based on previous monitoring cycles
 5. Generate formatted summary report with statistics
 6. Wait 6 minutes and repeat
+
+### Median ETA Feature
+
+The application tracks ETAs for each instance across multiple monitoring cycles and displays the median completion time:
+
+- **Per-Instance Tracking**: Each instance's ETA history is maintained separately throughout the session
+- **Median Calculation**: Provides a more stable completion estimate compared to current ETA snapshots
+- **Data Persistence**: ETA history persists for the entire monitoring session
+- **Format**: Displays in human-readable format (e.g., "2d 5h 30m", "8h 15m", "45m")
+- **Reliability**: Helps identify instances with consistent vs. variable performance patterns
+
+The median ETA appears as "N/A" until sufficient data points are collected for each instance.
 
 ### Error Handling
 
