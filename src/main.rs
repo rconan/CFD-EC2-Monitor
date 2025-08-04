@@ -52,6 +52,9 @@ pub enum MonitorError {
     
     #[error("Task join error: {0}")]
     TaskJoin(#[from] tokio::task::JoinError),
+    
+    #[error("Tmux session launch failed: {reason}")]
+    TmuxLaunchFailed { reason: String },
 }
 
 #[derive(Debug, Default, Clone)]
@@ -109,8 +112,8 @@ impl TimeStep {
                 }
 
                 // Calculate minutes needed based on current rate
-                // step_increase is over 2 minutes, so minutes per step = 2 / step_increase
-                let minutes_per_step = 2.0 / step_increase as f64;
+                // step_increase is over 6 minutes, so minutes per step = 6 / step_increase
+                let minutes_per_step = 6.0 / step_increase as f64;
                 let total_minutes = remaining_steps as f64 * minutes_per_step;
 
                 // Convert to hours and minutes
@@ -152,7 +155,7 @@ async fn main() -> Result<(), MonitorError> {
     let client = Client::new(&config);
     let mut previous_timesteps: HashMap<String, TimeStep> = HashMap::new();
 
-    println!("🚀 Starting EC2 Monitor - Refreshing every 2 minutes");
+    println!("🚀 Starting EC2 Monitor - Refreshing every 6 minutes");
     println!("Press Ctrl+C to stop monitoring\n");
 
     // Clear terminal for clean display
@@ -166,9 +169,9 @@ async fn main() -> Result<(), MonitorError> {
                 break;
             }
             _ = monitor_cycle(&client, &mut previous_timesteps) => {
-                // Sleep for 2 minutes before next cycle
-                println!("\n⏰ Next update in 2 minutes...");
-                sleep(Duration::from_secs(120)).await;
+                // Sleep for 6 minutes before next cycle
+                println!("\n⏰ Next update in 6 minutes...");
+                sleep(Duration::from_secs(360)).await;
             }
         }
     }
