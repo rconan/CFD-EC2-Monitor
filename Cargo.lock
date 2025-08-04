@@ -675,7 +675,6 @@ dependencies = [
  "ssh2",
  "thiserror",
  "tokio",
- "tokio-util",
 ]
 
 [[package]]
