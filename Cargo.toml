@@ -1,7 +1,19 @@
 [package]
 name = "ec2_monitor"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
+description = "AWS EC2 monitoring tool for computational simulation jobs"
+license = "MIT"
+repository = "https://github.com/yourusername/ec2_monitor"
+authors = ["Your Name <your.email@example.com>"]
+
+[lib]
+name = "ec2_monitor"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ec2_monitor"
+path = "src/main.rs"
 
 [dependencies]
 aws-config = "1.1"

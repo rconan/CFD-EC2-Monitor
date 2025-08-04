@@ -60,6 +60,19 @@ The application will:
 
 ## Architecture
 
+The codebase is modularized into separate modules for better organization:
+
+### Module Structure
+
+- **`lib.rs`**: Library interface and main monitoring cycle coordination
+- **`aws.rs`**: EC2 instance discovery and AWS API interactions
+- **`ssh.rs`**: SSH connection management and remote command execution  
+- **`eta.rs`**: ETA calculation logic and time formatting
+- **`report.rs`**: Report generation and terminal output formatting
+- **`types.rs`**: Data structure definitions (`InstanceInfo`, `InstanceResults`, `TimeStep`)
+- **`error.rs`**: Custom error types using `thiserror`
+- **`main.rs`**: Application entry point and monitoring loop
+
 ### Core Components
 
 - **Instance Discovery**: Uses EC2 API filters to find `c8g.48xlarge` instances in running state
@@ -70,12 +83,13 @@ The application will:
 
 ### Data Flow
 
-1. Initialize AWS SDK client for `sa-east-1` region
-2. Query EC2 API for running instances
-3. Launch parallel SSH connections to collect metrics from all instances
-4. Calculate step increases and track ETAs for median calculation based on previous monitoring cycles
-5. Generate formatted summary report with statistics
-6. Wait 6 minutes and repeat
+1. **Initialization** (`lib.rs`): Initialize AWS SDK client for `sa-east-1` region
+2. **Instance Discovery** (`aws.rs`): Query EC2 API for running instances
+3. **Parallel Processing** (`lib.rs`): Launch parallel SSH connections to collect metrics from all instances
+4. **SSH Monitoring** (`ssh.rs`): Execute remote commands on each instance
+5. **ETA Calculation** (`eta.rs`): Calculate step increases and track ETAs for median calculation
+6. **Report Generation** (`report.rs`): Generate formatted summary report with statistics
+7. **Cycle Repeat**: Wait 6 minutes and repeat the monitoring cycle
 
 ### Median ETA Feature
 
