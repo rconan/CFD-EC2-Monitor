@@ -6,7 +6,7 @@ AWS EC2 monitoring tool for computational simulation jobs running on `c8g.48xlar
 
 This Rust application connects to the AWS EC2 API to find running instances, SSH into each instance in parallel to check simulation progress, and generates formatted summary reports showing:
 
-- Simulation timestep progress from `solve.out` files with ETA calculations
+- Simulation timestep progress from `solve.out` files with ETA calculations (displayed in days, hours, and minutes)
 - CSV file counts in instance directories  
 - Disk space usage
 - Process status for `zcsvs`, `finalize`, and `s3 sync` workflows
@@ -18,7 +18,7 @@ The tool refreshes every 6 minutes and processes all instances concurrently for 
 
 - **Parallel Processing**: All instances are monitored simultaneously using async tasks
 - **Custom Error Handling**: Comprehensive error types using `thiserror` for better debugging
-- **ETA Calculations**: Estimates completion time based on timestep progression
+- **ETA Calculations**: Estimates completion time based on timestep progression (format: days, hours, minutes)
 - **Real-time Monitoring**: Continuous monitoring with automatic refresh every 6 minutes
 - **Formatted Reports**: Clean, tabular output with color-coded status indicators
 

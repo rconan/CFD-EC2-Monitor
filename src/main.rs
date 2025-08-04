@@ -116,11 +116,19 @@ impl TimeStep {
                 let minutes_per_step = 6.0 / step_increase as f64;
                 let total_minutes = remaining_steps as f64 * minutes_per_step;
 
-                // Convert to hours and minutes
-                let hours = (total_minutes / 60.0).floor() as u64;
+                // Convert to days, hours and minutes
+                let total_hours = total_minutes / 60.0;
+                let days = (total_hours / 24.0).floor() as u64;
+                let hours = (total_hours % 24.0).floor() as u64;
                 let minutes = (total_minutes % 60.0).round() as u64;
 
-                if hours > 0 {
+                if days > 0 {
+                    if hours > 0 {
+                        return Some(format!("{}d {}h {}m", days, hours, minutes));
+                    } else {
+                        return Some(format!("{}d {}m", days, minutes));
+                    }
+                } else if hours > 0 {
                     return Some(format!("{}h {}m", hours, minutes));
                 } else {
                     return Some(format!("{}m", minutes));
