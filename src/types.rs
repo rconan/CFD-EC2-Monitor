@@ -38,7 +38,7 @@ impl TimeStep {
         let i = time_step.find(':').unwrap();
         let (a, b) = time_step.split_at(i);
         Ok(Self {
-            step: a[10..].trim().parse::<usize>()?,
+            step: a[8..].trim().parse::<usize>()?,
             time: b[6..].trim().parse::<f64>()?,
             total_step: match case.split('_').last().unwrap() {
                 "2ms" => Ok(24_000),
