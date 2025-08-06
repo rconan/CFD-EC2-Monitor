@@ -121,8 +121,9 @@ The application tracks ETAs for each instance across multiple monitoring cycles 
 - **Data Persistence**: ETA history persists for the entire monitoring session
 - **Format**: Displays in human-readable format (e.g., "2d 5h 30m", "8h 15m", "45m")
 - **Reliability**: Helps identify instances with consistent vs. variable performance patterns
+- **Completion Handling**: When a simulation completes (current_step = total_step), the median ETA is automatically set to "0m"
 
-The median ETA appears as "N/A" until sufficient data points are collected for each instance.
+The median ETA appears as "N/A" until sufficient data points are collected for each instance. Once a simulation completes, the median ETA will display "0m" regardless of previous ETA history.
 
 ### Error Handling
 

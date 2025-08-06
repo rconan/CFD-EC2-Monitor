@@ -83,7 +83,17 @@ pub async fn monitor_cycle(
 
                             // Collect ETA in minutes for median calculation per instance
                             if let Some(eta_str) = &result.eta {
-                                if let Some(eta_minutes) = eta::parse_eta_to_minutes(eta_str) {
+                                // If simulation is complete, set median ETA to 0
+                                if eta_str == "Complete" {
+                                    instance_etas
+                                        .entry(instance.name.clone())
+                                        .or_insert_with(Vec::new)
+                                        .clear(); // Clear previous ETAs
+                                    instance_etas
+                                        .get_mut(&instance.name)
+                                        .unwrap()
+                                        .push(0.0); // Set median ETA to 0 minutes
+                                } else if let Some(eta_minutes) = eta::parse_eta_to_minutes(eta_str) {
                                     instance_etas
                                         .entry(instance.name.clone())
                                         .or_insert_with(Vec::new)
