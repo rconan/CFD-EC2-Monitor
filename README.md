@@ -58,25 +58,26 @@ The application will:
 5. Wait 6 minutes before the next monitoring cycle
 6. Press Ctrl+C to stop monitoring
 
-### Starting zcsvs Process
+### Starting Processes
 
-Use the included `start_zcsvs.sh` script to start the zcsvs process on a specific instance:
+Use the included `run_ec2_ps.sh` script to start any process on a specific instance:
 
 ```bash
 # Make the script executable (first time only)
-chmod +x start_zcsvs.sh
+chmod +x run_ec2_ps.sh
 
-# Start zcsvs process on an instance
-./start_zcsvs.sh <instance_name>
+# Start a process on an instance
+./run_ec2_ps.sh <process_name> <instance_name>
 
-# Example
-./start_zcsvs.sh zen00az180_OS_2ms
+# Examples
+./run_ec2_ps.sh zcsvs zen00az180_OS_2ms
+./run_ec2_ps.sh finalize zen00az180_OS_2ms
 ```
 
 The script will:
 1. Look up the instance's public IP address using the AWS EC2 API
 2. SSH into the instance using the `AWS_KEYPAIR` environment variable
-3. Start the zcsvs process in a detached tmux session
+3. Start the specified process in a detached tmux session (named after the process)
 4. Provide instructions for connecting to the tmux session
 
 ## Architecture
@@ -137,14 +138,16 @@ The application uses custom error types for better error reporting:
 
 ## Utility Scripts
 
-### `start_zcsvs.sh`
+### `run_ec2_ps.sh`
 
-A shell script for remotely starting the zcsvs process on EC2 instances:
+A shell script for remotely starting any process on EC2 instances:
 
 **Features:**
+- Accepts process name as first argument for flexibility (zcsvs, finalize, etc.)
 - Automatically looks up instance IP address by name using AWS EC2 API
 - Uses `AWS_KEYPAIR` environment variable for SSH authentication
-- Starts zcsvs process in a detached tmux session for persistence
+- Starts the specified process in a detached tmux session for persistence
+- Names tmux session after the process being started
 - Includes comprehensive error handling and user feedback
 
 **Requirements:**
