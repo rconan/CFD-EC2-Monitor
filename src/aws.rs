@@ -3,7 +3,7 @@
 use aws_sdk_ec2::{Client, types::Filter};
 use crate::{MonitorError, InstanceInfo};
 
-/// Find all c8g.48xlarge instances in running state
+/// Find all target instances (c8g.48xlarge and c6g.4xlarge) in running state
 pub async fn find_target_instances(client: &Client) -> Result<Vec<InstanceInfo>, MonitorError> {
     let mut instances = Vec::new();
 
@@ -12,6 +12,7 @@ pub async fn find_target_instances(client: &Client) -> Result<Vec<InstanceInfo>,
         Filter::builder()
             .name("instance-type")
             .values("c8g.48xlarge")
+            .values("c6g.4xlarge")
             .build(),
         Filter::builder()
             .name("instance-state-name")
@@ -39,12 +40,16 @@ pub async fn find_target_instances(client: &Client) -> Result<Vec<InstanceInfo>,
                 .unwrap_or(&instance_id)
                 .to_string();
 
+            let instance_type = instance.instance_type()
+                .map(|t| t.as_str().to_string())
+                .unwrap_or_else(|| "unknown".to_string());
             let public_ip = instance.public_ip_address().map(|ip| ip.to_string());
             let private_ip = instance.private_ip_address().map(|ip| ip.to_string());
 
             instances.push(InstanceInfo {
                 instance_id,
                 name,
+                instance_type,
                 public_ip,
                 private_ip,
             });

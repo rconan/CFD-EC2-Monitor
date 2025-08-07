@@ -22,6 +22,7 @@ pub async fn process_instance(instance: &InstanceInfo) -> Result<InstanceResults
             instance_id: instance.instance_id.clone(),
             public_ip: instance.public_ip.clone(),
             name: instance.name.clone(),
+            instance_type: instance.instance_type.clone(),
             timestep_result: Some(TimeStep::new(&instance.name, &timestep)?),
             csv_count: Some(csv_count),
             free_disk_space: Some(disk_space),

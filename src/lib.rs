@@ -37,15 +37,15 @@ pub async fn monitor_cycle(
     previous_timesteps: &mut HashMap<String, TimeStep>,
     instance_etas: &mut HashMap<String, Vec<f64>>,
 ) -> Result<(), MonitorError> {
-    // Find all c8g.48xlarge instances
+    // Find all target instances (c8g.48xlarge and c6g.4xlarge)
     let instances = aws::find_target_instances(client).await?;
 
     if instances.is_empty() {
-        println!("No c8g.48xlarge instances found in sa-east-1 region");
+        println!("No target instances found in sa-east-1 region");
         return Ok(());
     }
 
-    println!("🔍 Found {} c8g.48xlarge instances:", instances.len());
+    println!("🔍 Found {} target instances:", instances.len());
     println!("🚀 Processing all instances in parallel...");
 
     // Process all instances in parallel using tokio::spawn
@@ -118,6 +118,7 @@ pub async fn monitor_cycle(
                             instance_id: instance.instance_id.clone(),
                             public_ip: instance.public_ip.clone(),
                             name: instance.name.clone(),
+                            instance_type: instance.instance_type.clone(),
                             connection_error: Some(error_message),
                             ..Default::default()
                         });
@@ -130,6 +131,7 @@ pub async fn monitor_cycle(
                     instance_id: instance.instance_id.clone(),
                     public_ip: instance.public_ip.clone(),
                     name: instance.name.clone(),
+                    instance_type: instance.instance_type.clone(),
                     connection_error: Some(format!("Task error: {}", e)),
                     ..Default::default()
                 });

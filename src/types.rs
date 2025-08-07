@@ -8,6 +8,7 @@ use std::fmt::Display;
 pub struct InstanceInfo {
     pub instance_id: String,
     pub name: String,
+    pub instance_type: String,
     pub public_ip: Option<String>,
     pub private_ip: Option<String>,
 }
@@ -17,6 +18,7 @@ pub struct InstanceResults {
     pub instance_id: String,
     pub public_ip: Option<String>,
     pub name: String,
+    pub instance_type: String,
     pub timestep_result: Option<TimeStep>,
     pub csv_count: Option<i32>,
     pub free_disk_space: Option<String>,
@@ -35,7 +37,9 @@ pub struct TimeStep {
 
 impl TimeStep {
     pub fn new(case: &str, time_step: &str) -> Result<Self, MonitorError> {
-        let i = time_step.find(':').unwrap();
+        let Some(i) = time_step.find(':') else {
+            return Ok(Default::default());
+        };
         let (a, b) = time_step.split_at(i);
         Ok(Self {
             step: a[8..].trim().parse::<usize>()?,

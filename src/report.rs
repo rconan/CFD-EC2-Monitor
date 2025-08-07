@@ -4,8 +4,8 @@ use chrono::{DateTime, Local};
 use std::collections::HashMap;
 use std::io::{self, Write};
 
-use crate::{MonitorError, InstanceResults};
 use crate::eta::calculate_median_eta;
+use crate::{InstanceResults, MonitorError};
 
 /// Clear terminal screen
 pub fn clear_terminal() {
@@ -20,22 +20,24 @@ pub fn print_summary_report(
     instance_etas: &HashMap<String, Vec<f64>>,
 ) -> Result<(), MonitorError> {
     let local: DateTime<Local> = Local::now();
-    println!("{}", "\n".to_string() + "=".repeat(125).as_str());
+    println!("{}", "\n".to_string() + "=".repeat(135).as_str());
     println!("SUMMARY REPORT @ {local}");
-    println!("{}", "=".repeat(125));
+    println!("{}", "=".repeat(135));
 
     // Table headers
     println!(
-        "{:<20} {:^15} {:^15} {:^12} {:^15} {:<12} {:<20}",
+        "{:<20} {:^19} {:^12} {:^13} {:^15} {:^5} {:^8} {:<13} {:<12}",
         "Instance Name",
-        "Median ETA",
+        "Instance ID",
+        "Instance Type",
+        "ETA",
         "TimeStep",
-        "CSV Count",
-        "Free Disk",
-        "Current Process",
-        "Connection Status"
+        "CSV",
+        "Disk",
+        "Process",
+        "Connection"
     );
-    println!("{}", "-".repeat(125));
+    println!("{}", "-".repeat(135));
 
     for result in results {
         let instance_name = if result.name.len() > 18 {
@@ -102,8 +104,10 @@ pub fn print_summary_report(
         };
 
         println!(
-            "{:<20} {:>15} {:>15} {:>12} {:>15} {:<12} {:<20}",
+            "{:<20} {:>19} {:>12} {:>13} {:>15} {:>5} {:>8} {:<13} {:<12}",
             instance_name,
+            result.instance_id,
+            result.instance_type,
             median_eta_display,
             timestep_display,
             csv_count_display,
@@ -113,7 +117,7 @@ pub fn print_summary_report(
         );
     }
 
-    println!("{}", "-".repeat(125));
+    println!("{}", "-".repeat(135));
 
     // Summary statistics
     let total_instances = results.len();
@@ -148,6 +152,6 @@ pub fn print_summary_report(
         idle_count
     );
 
-    println!("{}", "=".repeat(125));
+    println!("{}", "=".repeat(135));
     Ok(())
 }

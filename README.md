@@ -1,11 +1,12 @@
 # EC2 Monitor
 
-AWS EC2 monitoring tool for computational simulation jobs running on `c8g.48xlarge` instances in the `sa-east-1` region.
+AWS EC2 monitoring tool for computational simulation jobs running on `c8g.48xlarge` and `c6g.4xlarge` instances in the `sa-east-1` region.
 
 ## Overview
 
 This Rust application connects to the AWS EC2 API to find running instances, SSH into each instance in parallel to check simulation progress, and generates formatted summary reports showing:
 
+- Instance information (name, ID, type)
 - Simulation timestep progress from `solve.out` files with median ETA calculations (displayed in days, hours, and minutes)
 - CSV file counts in instance directories  
 - Disk space usage
@@ -52,7 +53,7 @@ cargo build --release
 
 The application will:
 1. Start monitoring and display "🚀 Starting EC2 Monitor - Refreshing every 6 minutes"
-2. Find all running `c8g.48xlarge` instances
+2. Find all running target instances (`c8g.48xlarge` and `c6g.4xlarge`)
 3. Process all instances in parallel 
 4. Display a comprehensive summary table
 5. Wait 6 minutes before the next monitoring cycle
@@ -97,7 +98,7 @@ The codebase is modularized into separate modules for better organization:
 
 ### Core Components
 
-- **Instance Discovery**: Uses EC2 API filters to find `c8g.48xlarge` instances in running state
+- **Instance Discovery**: Uses EC2 API filters to find target instances (`c8g.48xlarge` and `c6g.4xlarge`) in running state
 - **Parallel SSH Monitoring**: Connects via SSH using `tokio::spawn` to execute remote commands concurrently
 - **Custom Error Handling**: `MonitorError` enum with specific variants for different failure modes
 - **Median ETA Calculation**: Tracks timestep progression and calculates median completion time per instance
