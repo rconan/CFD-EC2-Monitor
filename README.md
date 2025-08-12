@@ -7,7 +7,7 @@ AWS EC2 monitoring tool for computational simulation jobs running on `c8g.48xlar
 This Rust application connects to the AWS EC2 API to find running instances, SSH into each instance in parallel to check simulation progress, and generates formatted summary reports showing:
 
 - Instance information (name, ID, type)
-- Simulation timestep progress from `solve.out` files with median ETA calculations (displayed in days, hours, and minutes)
+- Simulation timestep progress from `solve.out` files with current ETA calculations (displayed in days, hours, and minutes)
 - CSV file counts in instance directories  
 - Disk space usage
 - Process status for `zcsvs`, `finalize`, and `s3 sync` workflows
@@ -19,7 +19,7 @@ The tool refreshes every 6 minutes and processes all instances concurrently for 
 
 - **Parallel Processing**: All instances are monitored simultaneously using async tasks
 - **Custom Error Handling**: Comprehensive error types using `thiserror` for better debugging
-- **Median ETA Calculations**: Tracks and displays median completion time per instance across monitoring cycles (format: days, hours, minutes)
+- **Current ETA Calculations**: Tracks and displays current completion time per instance based on real-time progress (format: days, hours, minutes)
 - **Real-time Monitoring**: Continuous monitoring with automatic refresh every 6 minutes
 - **Formatted Reports**: Clean, tabular output with color-coded status indicators
 
@@ -101,7 +101,7 @@ The codebase is modularized into separate modules for better organization:
 - **Instance Discovery**: Uses EC2 API filters to find target instances (`c8g.48xlarge` and `c6g.4xlarge`) in running state
 - **Parallel SSH Monitoring**: Connects via SSH using `tokio::spawn` to execute remote commands concurrently
 - **Custom Error Handling**: `MonitorError` enum with specific variants for different failure modes
-- **Median ETA Calculation**: Tracks timestep progression and calculates median completion time per instance
+- **Current ETA Calculation**: Tracks timestep progression and calculates current completion time per instance based on step increase rate
 - **Report Generation**: Formats and displays comprehensive status summaries with statistics
 
 ### Data Flow
@@ -110,22 +110,22 @@ The codebase is modularized into separate modules for better organization:
 2. **Instance Discovery** (`aws.rs`): Query EC2 API for running instances
 3. **Parallel Processing** (`lib.rs`): Launch parallel SSH connections to collect metrics from all instances
 4. **SSH Monitoring** (`ssh.rs`): Execute remote commands on each instance
-5. **ETA Calculation** (`eta.rs`): Calculate step increases and track ETAs for median calculation
+5. **ETA Calculation** (`types.rs`): Calculate step increases and determine current ETA based on progress rate
 6. **Report Generation** (`report.rs`): Generate formatted summary report with statistics
 7. **Cycle Repeat**: Wait 6 minutes and repeat the monitoring cycle
 
-### Median ETA Feature
+### Current ETA Feature
 
-The application tracks ETAs for each instance across multiple monitoring cycles and displays the median completion time:
+The application calculates and displays the current ETA for each instance based on real-time simulation progress:
 
-- **Per-Instance Tracking**: Each instance's ETA history is maintained separately throughout the session
-- **Median Calculation**: Provides a more stable completion estimate compared to current ETA snapshots
-- **Data Persistence**: ETA history persists for the entire monitoring session
+- **Real-time Calculation**: ETA is calculated based on the current step increase rate over the last 6-minute monitoring cycle
+- **Dynamic Updates**: Provides up-to-date completion estimates that reflect current simulation performance
+- **Progress-based**: Uses the ratio of remaining steps to current step increase rate to estimate completion time
 - **Format**: Displays in human-readable format (e.g., "2d 5h 30m", "8h 15m", "45m")
-- **Reliability**: Helps identify instances with consistent vs. variable performance patterns
-- **Completion Handling**: When a simulation completes (current_step = total_step), the median ETA is automatically set to "0m"
+- **Status Indicators**: Shows "Complete" for finished simulations, "Stalled" for zero progress, and "N/A" for insufficient data
+- **Completion Handling**: When a simulation completes (current_step = total_step), the ETA automatically shows "Complete"
 
-The median ETA appears as "N/A" until sufficient data points are collected for each instance. Once a simulation completes, the median ETA will display "0m" regardless of previous ETA history.
+The current ETA appears as "N/A" during the first monitoring cycle until step increase data is available. The calculation assumes the current progress rate will continue consistently.
 
 ### Error Handling
 

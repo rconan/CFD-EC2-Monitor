@@ -4,7 +4,6 @@ use chrono::{DateTime, Local};
 use std::collections::HashMap;
 use std::io::{self, Write};
 
-use crate::eta::calculate_median_eta;
 use crate::{InstanceResults, MonitorError};
 
 /// Clear terminal screen
@@ -17,7 +16,7 @@ pub fn clear_terminal() {
 /// Print comprehensive summary report
 pub fn print_summary_report(
     results: &[InstanceResults],
-    instance_etas: &HashMap<String, Vec<f64>>,
+    _instance_etas: &HashMap<String, Vec<f64>>,
 ) -> Result<(), MonitorError> {
     let local: DateTime<Local> = Local::now();
     println!("{}", "\n".to_string() + "=".repeat(135).as_str());
@@ -46,12 +45,12 @@ pub fn print_summary_report(
             result.name.clone()
         };
 
-        let median_eta_display = match instance_etas.get(&result.name) {
-            Some(etas) if etas.len() > 0 => match calculate_median_eta(etas) {
-                Some(median) => median,
+        let current_eta_display = match &result.timestep_result {
+            Some(timestep) => match timestep.calculate_eta() {
+                Some(eta) => eta,
                 None => "N/A".to_string(),
             },
-            _ => "N/A".to_string(),
+            None => "N/A".to_string(),
         };
 
         let (
@@ -108,7 +107,7 @@ pub fn print_summary_report(
             instance_name,
             result.instance_id,
             result.instance_type,
-            median_eta_display,
+            current_eta_display,
             timestep_display,
             csv_count_display,
             disk_display,
