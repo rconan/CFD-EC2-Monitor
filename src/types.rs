@@ -41,16 +41,15 @@ impl TimeStep {
             return Ok(Default::default());
         };
         let (a, b) = time_step.split_at(i);
+        let steps = case.split('_').find_map(|x| match x {
+            "2ms" => Some(24_000),
+            "7ms" | "12ms" | "17ms" => Some(18_000),
+            _ => None,
+        });
         Ok(Self {
             step: a[8..].trim().parse::<usize>()?,
             time: b[6..].trim().parse::<f64>()?,
-            total_step: match case.split('_').last().unwrap() {
-                "2ms" => Ok(24_000),
-                "7ms" | "12ms" | "17ms" => Ok(18_000),
-                x => Err(MonitorError::InvalidWindSpeed {
-                    speed: x.to_string(),
-                }),
-            }?,
+            total_step: steps.ok_or(MonitorError::InvalidWindSpeed)?,
             step_increase: None,
         })
     }

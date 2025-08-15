@@ -25,7 +25,7 @@ pub fn print_summary_report(
 
     // Table headers
     println!(
-        "{:<20} {:^19} {:^12} {:^13} {:^15} {:^5} {:^8} {:<13} {:<12}",
+        "{:<22} {:^19} {:^12} {:^13} {:^15} {:^5} {:^8} {:<13} {:<12}",
         "Instance Name",
         "Instance ID",
         "Instance Type",
@@ -39,8 +39,8 @@ pub fn print_summary_report(
     println!("{}", "-".repeat(135));
 
     for result in results {
-        let instance_name = if result.name.len() > 18 {
-            format!("{}...", &result.name[..15])
+        let instance_name = if result.name.len() > 20 {
+            format!("{}...", &result.name[..17])
         } else {
             result.name.clone()
         };
@@ -103,7 +103,7 @@ pub fn print_summary_report(
         };
 
         println!(
-            "{:<20} {:>19} {:>12} {:>13} {:>15} {:>5} {:>8} {:<13} {:<12}",
+            "{:<22} {:>19} {:>12} {:>13} {:>15} {:>5} {:>8} {:<13} {:<12}",
             instance_name,
             result.instance_id,
             result.instance_type,

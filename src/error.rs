@@ -31,8 +31,8 @@ pub enum MonitorError {
     #[error("SSH authentication failed")]
     AuthenticationFailed,
 
-    #[error("Invalid wind speed: {speed}. Valid speeds are 2m/s, 7m/s, 12m/s, or 17m/s")]
-    InvalidWindSpeed { speed: String },
+    #[error("Invalid wind speed, valid speeds are 2m/s, 7m/s, 12m/s, or 17m/s")]
+    InvalidWindSpeed,
 
     #[error("SSH command failed with exit code {code}: {stderr}")]
     SshCommandFailed { code: i32, stderr: String },
